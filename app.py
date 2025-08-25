@@ -21,14 +21,14 @@ def get_trailer_url(movie_title, year):
             return results['result'][0]['link']
     except Exception as e:
         print(f"Error buscando tráiler para '{movie_title}': {e}")
-    return "https://www.youtube.com/embed/dQw4w9WgXcQ" # URL por defecto si no se encuentra
+    # URL de fallback por si falla la búsqueda
+    return "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 
 
 def scrape_filmaffinity():
     """Realiza el scraping de la lista de FilmAffinity y devuelve los datos."""
     scraper = cloudscraper.create_scraper()
     movies_data = []
     
-    # --- Parte 1: Scraping de la lista principal ---
     print("Obteniendo la lista principal...")
     try:
         response = scraper.get(FILMAFFINITY_LIST_URL)
@@ -46,7 +46,6 @@ def scrape_filmaffinity():
 
     print(f"Se encontraron {len(movie_items)} películas. Obteniendo detalles...")
 
-    # --- Parte 2: Scraping de los detalles de cada película ---
     for item in movie_items:
         try:
             movie_id = item['data-movie-id']
@@ -55,14 +54,19 @@ def scrape_filmaffinity():
             title_element = card.find('div', class_='mc-title').find('a')
             title = title_element.text.strip()
             
-            year = card.find('span', class_='mc-year').text.strip()
-            rating = card.find('div', class_=['avg', 'fa-avg-rat-box']).text.strip()
-            poster_img = card.find('img')
-            poster_url = poster_img['data-srcset'].split(',')[-1].split(' ')[1] if poster_img and 'data-srcset' in poster_img.attrs else 'https://via.placeholder.com/150x210'
-
-            details_url = "https://www.filmaffinity.com" + title_element['href']
+            year_element = card.find('span', class_='mc-year')
+            year = year_element.text.strip() if year_element else "N/A"
             
-            # --- Petición a la página de detalles para la sinopsis ---
+            rating_element = card.find('div', class_='avg')
+            rating = rating_element.text.strip() if rating_element else "N/A"
+
+            poster_img = card.find('img')
+            poster_url = poster_img.get('data-srcset', '').split(',')[-1].split(' ')[1] if poster_img and poster_img.get('data-srcset') else 'https://via.placeholder.com/150x210'
+
+            # --- CORRECCIÓN CLAVE AQUÍ ---
+            # El href ya es una URL absoluta, no hay que añadirle el dominio.
+            details_url = title_element['href']
+            
             print(f"Obteniendo sinopsis para: {title}")
             details_response = scraper.get(details_url)
             details_soup = BeautifulSoup(details_response.text, 'html.parser')
@@ -82,13 +86,15 @@ def scrape_filmaffinity():
                 "trailer_url": trailer_url
             })
         except Exception as e:
-            print(f"Error procesando una película: {e}")
+            print(f"Error procesando una película ('{title if 'title' in locals() else 'Desconocido'}'): {e}")
             continue
 
-    # Ordenar la lista de forma inversa a como aparece en la web
+    if not movies_data:
+        print("El scraping finalizó pero no se pudo extraer ninguna película.")
+        return []
+
     movies_data.reverse()
     
-    # Guardar en caché
     with open(CACHE_FILE, 'w', encoding='utf-8') as f:
         json.dump(movies_data, f, ensure_ascii=False, indent=4)
         
@@ -98,17 +104,23 @@ def scrape_filmaffinity():
 @app.route('/')
 def index():
     """Página principal que muestra las películas desde la caché."""
+    movies = []
+    # Si no hay caché, la primera carga la creará.
     if not os.path.exists(CACHE_FILE):
         print("Caché no encontrada. Realizando scraping inicial...")
-        scrape_filmaffinity()
-
-    try:
-        with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-            movies = json.load(f)
-    except (IOError, json.JSONDecodeError):
-        # Si el archivo está corrupto o vacío, vuelve a scrapear
         movies = scrape_filmaffinity()
-        
+    else:
+        try:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                movies = json.load(f)
+                # Si la caché está vacía por un fallo anterior, re-scrapeamos
+                if not movies:
+                    print("La caché estaba vacía. Refrescando datos...")
+                    movies = scrape_filmaffinity()
+        except (IOError, json.JSONDecodeError):
+            print("Error leyendo la caché. Refrescando datos...")
+            movies = scrape_filmaffinity()
+            
     return render_template('index.html', movies=movies)
 
 @app.route('/refresh')
@@ -119,6 +131,4 @@ def refresh():
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    # Este modo es solo para desarrollo local. 
-    # Render usará Gunicorn para ejecutar la app.
     app.run(debug=True)
