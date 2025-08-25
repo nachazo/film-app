@@ -3,7 +3,10 @@ import json
 import cloudscraper
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, redirect, url_for
-from urllib.parse import quote_plus # Necesario para crear la URL de búsqueda
+from urllib.parse import quote_plus
+# --- CAMBIO: Importaciones necesarias para la pausa ---
+import time
+import random
 
 app = Flask(__name__)
 
@@ -13,7 +16,6 @@ CACHE_FILE = "cache.json"
 
 def generate_youtube_search_url(movie_title):
     """Genera una URL de búsqueda en YouTube para el tráiler."""
-    # Codifica el texto para que sea seguro en una URL
     query = quote_plus(f"{movie_title} trailer castellano")
     return f"https://www.youtube.com/results?search_query={query}"
 
@@ -58,7 +60,6 @@ def scrape_filmaffinity():
 
             details_url = title_element['href']
             
-            # --- NUEVO: Detectar el tipo de contenido (Serie/Película) ---
             type_element = item.find('span', class_='type')
             content_type = type_element.text.strip() if type_element else "Película"
 
@@ -69,7 +70,6 @@ def scrape_filmaffinity():
             synopsis_element = details_soup.find('dd', {'itemprop': 'description'})
             synopsis = synopsis_element.text.strip() if synopsis_element else "Sinopsis no disponible."
             
-            # --- CAMBIO: Generar URL de búsqueda en lugar de buscar un video específico ---
             search_url = generate_youtube_search_url(title)
 
             movies_data.append({
@@ -79,9 +79,17 @@ def scrape_filmaffinity():
                 "rating": rating,
                 "poster": poster_url,
                 "synopsis": synopsis,
-                "type": content_type, # Campo añadido
-                "trailer_search_url": search_url # Campo modificado
+                "type": content_type,
+                "trailer_search_url": search_url
             })
+
+            # --- CAMBIO CLAVE: Añadir una pausa aleatoria ---
+            # Esperamos entre 1 y 3 segundos antes de la siguiente petición
+            # para no saturar el servidor y evitar el error 429.
+            sleep_time = random.uniform(1, 3)
+            print(f"Esperando {sleep_time:.2f} segundos...")
+            time.sleep(sleep_time)
+
         except Exception as e:
             print(f"Error procesando una película ('{title if 'title' in locals() else 'Desconocido'}'): {e}")
             continue
