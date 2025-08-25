@@ -1,0 +1,5 @@
+Flask>=2.0
+gunicorn>=20.0
+cloudscraper>=1.2.71
+beautifulsoup4>=4.11
+youtube-search-python>=1.6.6
