@@ -3,7 +3,7 @@ import json
 import cloudscraper
 from bs4 import BeautifulSoup
 from flask import Flask, render_template, redirect, url_for
-from youtubesearchpython import VideosSearch
+from urllib.parse import quote_plus # Necesario para crear la URL de búsqueda
 
 app = Flask(__name__)
 
@@ -11,18 +11,11 @@ app = Flask(__name__)
 FILMAFFINITY_LIST_URL = "https://www.filmaffinity.com/es/userlist.php?user_id=629775&list_id=1013"
 CACHE_FILE = "cache.json"
 
-def get_trailer_url(movie_title, year):
-    """Busca en YouTube el tráiler de la película."""
-    try:
-        query = f"{movie_title} {year} trailer español"
-        videos_search = VideosSearch(query, limit=1)
-        results = videos_search.result()
-        if results['result']:
-            return results['result'][0]['link']
-    except Exception as e:
-        print(f"Error buscando tráiler para '{movie_title}': {e}")
-    # URL de fallback por si falla la búsqueda
-    return "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 
+def generate_youtube_search_url(movie_title):
+    """Genera una URL de búsqueda en YouTube para el tráiler."""
+    # Codifica el texto para que sea seguro en una URL
+    query = quote_plus(f"{movie_title} trailer castellano")
+    return f"https://www.youtube.com/results?search_query={query}"
 
 def scrape_filmaffinity():
     """Realiza el scraping de la lista de FilmAffinity y devuelve los datos."""
@@ -63,10 +56,12 @@ def scrape_filmaffinity():
             poster_img = card.find('img')
             poster_url = poster_img.get('data-srcset', '').split(',')[-1].split(' ')[1] if poster_img and poster_img.get('data-srcset') else 'https://via.placeholder.com/150x210'
 
-            # --- CORRECCIÓN CLAVE AQUÍ ---
-            # El href ya es una URL absoluta, no hay que añadirle el dominio.
             details_url = title_element['href']
             
+            # --- NUEVO: Detectar el tipo de contenido (Serie/Película) ---
+            type_element = item.find('span', class_='type')
+            content_type = type_element.text.strip() if type_element else "Película"
+
             print(f"Obteniendo sinopsis para: {title}")
             details_response = scraper.get(details_url)
             details_soup = BeautifulSoup(details_response.text, 'html.parser')
@@ -74,7 +69,8 @@ def scrape_filmaffinity():
             synopsis_element = details_soup.find('dd', {'itemprop': 'description'})
             synopsis = synopsis_element.text.strip() if synopsis_element else "Sinopsis no disponible."
             
-            trailer_url = get_trailer_url(title, year)
+            # --- CAMBIO: Generar URL de búsqueda en lugar de buscar un video específico ---
+            search_url = generate_youtube_search_url(title)
 
             movies_data.append({
                 "id": movie_id,
@@ -83,7 +79,8 @@ def scrape_filmaffinity():
                 "rating": rating,
                 "poster": poster_url,
                 "synopsis": synopsis,
-                "trailer_url": trailer_url
+                "type": content_type, # Campo añadido
+                "trailer_search_url": search_url # Campo modificado
             })
         except Exception as e:
             print(f"Error procesando una película ('{title if 'title' in locals() else 'Desconocido'}'): {e}")
@@ -105,7 +102,6 @@ def scrape_filmaffinity():
 def index():
     """Página principal que muestra las películas desde la caché."""
     movies = []
-    # Si no hay caché, la primera carga la creará.
     if not os.path.exists(CACHE_FILE):
         print("Caché no encontrada. Realizando scraping inicial...")
         movies = scrape_filmaffinity()
@@ -113,7 +109,6 @@ def index():
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as f:
                 movies = json.load(f)
-                # Si la caché está vacía por un fallo anterior, re-scrapeamos
                 if not movies:
                     print("La caché estaba vacía. Refrescando datos...")
                     movies = scrape_filmaffinity()
